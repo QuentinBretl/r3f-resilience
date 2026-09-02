@@ -1,0 +1,43 @@
+{
+  "name": "r3f-resilience",
+  "version": "0.1.0",
+  "description": "Keep a React Three Fiber scene alive in production: device quality tiers, WebGL context-loss recovery, and the post-processing traps that quietly leak GPU memory.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Quentin Bretl",
+  "keywords": [
+    "react-three-fiber",
+    "threejs",
+    "webgl",
+    "postprocessing",
+    "context-loss",
+    "performance"
+  ],
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "peerDependencies": {
+    "@react-three/fiber": ">=9",
+    "react": ">=18",
+    "three": ">=0.160"
+  },
+  "devDependencies": {
+    "@react-three/fiber": "^9.5.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "postprocessing": "^6.38.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "three": "^0.169.0",
+    "vite": "^6.0.11"
+  }
+}
