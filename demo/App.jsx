@@ -52,10 +52,39 @@ export default function App() {
   return (
     <div className="app">
       <div className="stage">
-        {/* The Canvas is unmounted on loss rather than left in place. A lost
-            context paints nothing, so leaving it up shows a black rectangle
-            and lets the user believe the page is merely slow. */}
-        {lost ? (
+        {/* The Canvas stays mounted while the context is lost, and the notice
+            is laid over it.
+
+            Unmounting it was my first instinct and it is wrong: tear the
+            canvas down and you destroy the only object that can ever receive
+            `webglcontextrestored`, so the scene can never come back on its
+            own. Keep it, cover it, and a restored context simply resumes
+            painting under a notice you then remove.
+
+            `frameloop` goes to "never" meanwhile. A lost context still accepts
+            draw calls, it just ignores them, and r3f would keep rendering into
+            the void several hundred times a second while the user reads the
+            message. */}
+        <Canvas
+          camera={CAMERA}
+          dpr={profile.dpr}
+          frameloop={lost ? 'never' : 'always'}
+          gl={GL}
+          shadows={profile.shadows}
+          style={CANVAS_STYLE}
+          onCreated={handleCreated}
+        >
+          <Scene profile={profile} selective={selective} onSample={onSample} />
+          <EffectsHost
+            profile={profile}
+            selective={selective}
+            toneMapping={toneMapping}
+            churn={churn}
+            memoise={memoise}
+          />
+        </Canvas>
+
+        {lost && (
           <div className="lost">
             <h2>The WebGL context is gone.</h2>
             <p>
@@ -69,28 +98,6 @@ export default function App() {
               Restore the context
             </button>
           </div>
-        ) : (
-          <Canvas
-            camera={CAMERA}
-            dpr={profile.dpr}
-            gl={GL}
-            shadows={profile.shadows}
-            style={CANVAS_STYLE}
-            onCreated={handleCreated}
-          >
-            <Scene
-              profile={profile}
-              selective={selective}
-              onSample={onSample}
-            />
-            <EffectsHost
-              profile={profile}
-              selective={selective}
-              toneMapping={toneMapping}
-              churn={churn}
-              memoise={memoise}
-            />
-          </Canvas>
         )}
       </div>
 

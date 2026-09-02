@@ -1,3 +1,24 @@
+// The extension object, kept per context.
+//
+// This cache is not an optimisation, it is the only thing that makes restoring
+// possible. `getExtension()` returns null while a context is lost, by
+// specification, so asking for WEBGL_lose_context at the moment you want to
+// restore always hands you nothing. The object has to be captured while the
+// context is still alive, and it stays usable across the loss.
+const extensions = new WeakMap();
+
+function loseContextExtension(renderer, { cachedOnly = false } = {}) {
+  const gl = renderer?.getContext?.();
+  if (!gl) return null;
+
+  const cached = extensions.get(gl);
+  if (cached || cachedOnly) return cached ?? null;
+
+  const extension = gl.getExtension('WEBGL_lose_context');
+  if (extension) extensions.set(gl, extension);
+  return extension;
+}
+
 /**
  * Force a context loss, on purpose.
  *
@@ -13,9 +34,7 @@
  * @returns {boolean} true when the loss was triggered
  */
 export function loseContext(renderer) {
-  const extension = renderer
-    ?.getContext?.()
-    ?.getExtension('WEBGL_lose_context');
+  const extension = loseContextExtension(renderer);
   if (!extension) return false;
   extension.loseContext();
   return true;
@@ -24,21 +43,20 @@ export function loseContext(renderer) {
 /**
  * Restore a context previously dropped with {@link loseContext}.
  *
- * Only meaningful for a simulated loss. A real one is restored by the browser
- * on its own schedule, and calling this will not hurry it along.
+ * Only works for a simulated loss, and only when {@link loseContext} captured
+ * the extension first, for the reason given above. A real loss is restored by
+ * the browser on its own schedule and calling this will not hurry it along.
  *
  * Note that restoring is not the end of the story: every GPU resource created
  * before the loss is gone. three.js re-uploads what it still holds references
- * to, but anything you cached by hand (render targets, manually compiled
- * programs) has to be rebuilt. Restoration is a starting point, not a fix.
+ * to, but anything you cached by hand, render targets above all, has to be
+ * rebuilt. Restoration is a starting point, not a fix.
  *
  * @param {import('three').WebGLRenderer} renderer
  * @returns {boolean}
  */
 export function restoreContext(renderer) {
-  const extension = renderer
-    ?.getContext?.()
-    ?.getExtension('WEBGL_lose_context');
+  const extension = loseContextExtension(renderer, { cachedOnly: true });
   if (!extension) return false;
   extension.restoreContext();
   return true;

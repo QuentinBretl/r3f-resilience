@@ -31,7 +31,7 @@ laptop switching between integrated and discrete GPUs, a background tab
 reclaimed by the browser, or simply one WebGL context too many on the page.
 Browsers cap it around sixteen and drop the oldest without asking.
 
-Two details carry the recovery, and both are easy to miss.
+Three details carry the recovery, and all three are easy to miss.
 
 `event.preventDefault()` on `webglcontextlost` is **mandatory**. The default
 action of that event is, counter-intuitively, to give up: without the call the
@@ -42,6 +42,21 @@ The listener must be **detached on unmount**. react-three-fiber calls
 to the GPU. That fires a perfectly ordinary `webglcontextlost`. Leave the
 listener attached and every route change is reported to your users as a crash.
 
+And `getExtension()` **returns null while a context is lost**, by
+specification. So the `WEBGL_lose_context` object has to be captured while the
+context is still alive, or the moment you want to restore you will be handed
+nothing. `restoreContext` here reads a cache that `loseContext` filled, which
+is the only reason it works at all.
+
+Keep the Canvas mounted and lay a notice over it, rather than unmounting it.
+Unmounting was my first instinct and it is wrong twice over: a black rectangle
+reads as a slow page so nobody reports it, and tearing the canvas down destroys
+the only object that can ever receive `webglcontextrestored`, so the scene can
+never come back. Cover it instead, and drop `frameloop` to `never` meanwhile: a
+lost context still accepts draw calls, it simply ignores them, and there is no
+reason to render into the void several hundred times a second while someone
+reads your message.
+
 ```jsx
 import { useWebGLContextLoss } from 'r3f-resilience';
 
@@ -50,14 +65,16 @@ function Stage() {
     onLost: () => track('webgl_context_lost'),
   });
 
-  if (lost) return <SceneUnavailable />;
-  return <Canvas onCreated={onCreated}>{/* … */}</Canvas>;
+  return (
+    <div style={{ position: 'relative' }}>
+      <Canvas frameloop={lost ? 'never' : 'always'} onCreated={onCreated}>
+        {/* … */}
+      </Canvas>
+      {lost && <SceneUnavailable />}
+    </div>
+  );
 }
 ```
-
-Render something instead of the canvas rather than leaving it in place. A lost
-context paints nothing, and a black rectangle reads as a slow page, so nobody
-reports it.
 
 ### An EffectComposer written inline rebuilds itself on every render
 
@@ -168,7 +185,7 @@ import {
 | `useWebGLContextLoss(opts?)` | `{ onCreated, lost }`. Hand `onCreated` to the Canvas. |
 | `useSelectionLayer(object, layer, enabled?)` | Enables a layer across a subtree, and disables it on cleanup. |
 | `loseContext(renderer)` | Drops the context via `WEBGL_lose_context`, to test recovery. Returns `false` if unsupported. |
-| `restoreContext(renderer)` | Restores a simulated loss. |
+| `restoreContext(renderer)` | Restores a simulated loss, using the extension captured by `loseContext`. |
 | `countPrograms(renderer)` | Compiled shader programs. Your leak detector. |
 
 `resolveQualityTier` is deliberately free of any `three` import: you usually
