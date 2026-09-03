@@ -1,139 +1,144 @@
 # r3f-resilience
 
-Keeping a React Three Fiber scene alive in production is a different job from
-getting one on screen. This is a small set of utilities and a demo you can break
-on purpose, extracted from a live multiplayer browser game after the failures
-below happened for real.
+A React Three Fiber scene that breaks on purpose, so you can watch a silent
+WebGL failure happen - and check four widely repeated fixes for it, three of
+which do not survive being measured.
 
-Three of them, in the order they cost me the most time:
+It comes out of Lycanthropia, a multiplayer browser game where this happened
+for real, on other people's hardware, during sessions that lasted an hour. What
+makes these failures expensive is not that they are hard to fix. It is that
+**nothing in JavaScript ever sees them**: no exception, no error boundary, no
+rejected promise, no failed request. The scene simply stops being right, the
+logs stay clean, and users describe it as "slow".
 
-1. **The context goes away and nothing tells you.** No exception, no error
-   boundary, `useFrame` keeps running. The canvas just stops painting.
-2. **A quality tier is not a settings menu.** It is the difference between a
-   phone rendering your scene and a phone reloading the tab.
-3. **Post-processing is where the received wisdom is wrong**, in both
-   directions: it costs you things nobody warns about, and it is blamed for one
-   thing it no longer does.
-
-The demo lets you trigger all three from a panel and watch the counters move.
+Which is also why so much of the advice about them is wrong in a way nobody
+notices. If you cannot see the failure, you cannot see that your fix did
+nothing.
 
 ```bash
 npm install
 npm run dev
 ```
 
-## The failures, and what actually causes them
+Every switch in the demo removes one piece of real code, and every claim on
+this page is a number on screen that moves while you watch.
 
-### A lost WebGL context is silent
+## The instrument
+
+A WebGL error is not thrown. The browser prints it to the console and returns
+normally, so nothing that wraps the console API can see it, no logger catches
+it, and reading the code will not tell you which call is failing. That is why
+the problem in section 2 took four wrong theories to pin down, two of which I
+had already shipped as fixes.
+
+The way out is to stop reading and start counting. `demo/glProbe.js` wraps the
+call under suspicion and reads the error queue immediately after it:
+
+```js
+proto.blitFramebuffer = function (...args) {
+  state.blits += 1;
+  const result = original.apply(this, args);
+  if (this.getError() !== 0) state.errors += 1;   // ← the whole idea
+  return result;
+};
+```
+
+That turns "something somewhere is wrong" into a call site, a stack, and the
+**gl errors** counter in the demo panel. `getError()` is a synchronous round
+trip to the driver, which is why this is instrumentation and not production
+code — but a handful of blits per frame makes it cheap enough to leave armed
+while you work.
+
+## 1 — A lost context is silent, and silence is the whole problem
 
 Contexts are lost for reasons entirely outside your code: a driver reset, a
 laptop switching between integrated and discrete GPUs, a background tab
-reclaimed by the browser, or simply one WebGL context too many on the page.
-Browsers cap it around sixteen and drop the oldest without asking.
+reclaimed by the browser, or one WebGL context too many on the page (browsers
+cap it around sixteen and drop the oldest without asking).
 
-Three details carry the recovery, and all three are easy to miss.
+Uncheck **Let the application notice** in the demo, kill the context, and look
+at the whole page rather than at the canvas. The scene is black. Every counter
+in the panel still reads healthy. The render loop is still running at full
+speed into a context that ignores every draw call. Nothing throws, no error
+boundary fires, no promise rejects, and the only trace anywhere is one line in
+a console nobody has open:
 
-`event.preventDefault()` on `webglcontextlost` is **mandatory**. The default
-action of that event is, counter-intuitively, to give up: without the call the
-browser never fires `webglcontextrestored` and the loss is permanent.
-
-The listener must be **detached on unmount**. react-three-fiber calls
-`gl.forceContextLoss()` itself when a Canvas unmounts, to hand the context back
-to the GPU. That fires a perfectly ordinary `webglcontextlost`. Leave the
-listener attached and every route change is reported to your users as a crash.
-
-And `getExtension()` **returns null while a context is lost**, by
-specification. So the `WEBGL_lose_context` object has to be captured while the
-context is still alive, or the moment you want to restore you will be handed
-nothing. `restoreContext` here reads a cache that `loseContext` filled, which
-is the only reason it works at all.
-
-Keep the Canvas mounted and lay a notice over it, rather than unmounting it.
-Unmounting was my first instinct and it is wrong twice over: a black rectangle
-reads as a slow page so nobody reports it, and tearing the canvas down destroys
-the only object that can ever receive `webglcontextrestored`, so the scene can
-never come back. Cover it instead, and drop `frameloop` to `never` meanwhile: a
-lost context still accepts draw calls, it simply ignores them, and there is no
-reason to render into the void several hundred times a second while someone
-reads your message.
-
-```jsx
-import { useWebGLContextLoss } from 'r3f-resilience';
-
-function Stage() {
-  const { onCreated, lost } = useWebGLContextLoss({
-    onLost: () => track('webgl_context_lost'),
-  });
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <Canvas frameloop={lost ? 'never' : 'always'} onCreated={onCreated}>
-        {/* … */}
-      </Canvas>
-      {lost && <SceneUnavailable />}
-    </div>
-  );
-}
+```
+THREE.WebGLRenderer: Context Lost.
 ```
 
-### An EffectComposer written inline rebuilds itself on every render
+That is the failure. Not that the scene cannot come back - it can, and you will
+see below how little you have to do about that - but that **your application is
+never told**, so your users are the monitoring. They see a black rectangle,
+read it as a slow page, and never file a report. My logs were clean for weeks.
 
-An `EffectComposer` rebuilds its pass list whenever `children` changes identity,
-which in React means on **every render of the component holding the JSX**. So a
-composer written inline inside a component that re-renders often, and "often"
-here means any component subscribed to a context that updates on every incoming
-message, tears its passes down and builds them again several times a second.
+So the job is detection, and then three small things:
 
-The widely repeated conclusion is that this leaks GPU memory, on the grounds
-that `removePass` is not paired with a dispose. **I measured it, and on
-`@react-three/postprocessing` 3.1.1 that is no longer true.** The teardown
-effect calls `removePass` and `disposeGeneratedPass` together, and with the
-chain rebuilt thirty times a second in the demo, both the shader program count
-and the texture count stay flat. The counters are on screen so you can check
-that for yourself rather than taking my word for it, or anyone else's.
+- **Say something.** A notice over the canvas costs nothing and turns a silent
+  failure into a support ticket you can act on.
+- **Stop rendering.** A lost context still accepts draw calls, it simply
+  ignores them. `frameloop: 'never'` while lost saves a few hundred pointless
+  frames a second, and the demo deliberately leaves the loop running when
+  detection is off so you can watch that happen.
+- **Cover the canvas, do not replace it.** Restoring works on the canvas still
+  mounted underneath the notice. Swap the `<Canvas>` out for a fallback and
+  React will happily mount you a new one later - at the price of a fresh
+  context, every shader recompiled and every texture re-uploaded.
 
-The advice survives the correction, for its own reason rather than a borrowed
-one: rebuilding passes and recompiling shaders at 30 Hz is CPU time and frame
-pacing spent on nothing at all. Hoist the chain, memoise it, and give it props
-whose identity is stable.
+Two details that do carry real weight:
+
+- **Detach the listeners** on unmount *and* before attaching to a new canvas.
+  react-three-fiber calls `gl.forceContextLoss()` itself when a Canvas
+  unmounts, to hand the context back to the GPU, and that fires a perfectly
+  ordinary `webglcontextlost`. Leave a listener attached and every route change
+  is reported to your users as a crash.
+- **`getExtension()` returns `null` while a context is lost**, by
+  specification. So `WEBGL_lose_context` has to be captured while the context
+  is still alive. `restoreContext()` in `src/contextLoss.js` reads a cache that
+  `loseContext()` filled, which is the only reason the demo's restore button
+  works at all.
 
 ```jsx
-// Module scope, memoised, no props whose identity changes.
-const Effects = memo(({ profile }) => (
-  <EffectComposer multisampling={profile.multisampling}>
-    <Bloom intensity={2.4} luminanceThreshold={0.6} mipmapBlur />
-    <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-  </EffectComposer>
-));
+const { onCreated, lost } = useWebGLContextLoss();
+
+<div style={{ position: 'relative' }}>
+  <Canvas frameloop={lost ? 'never' : 'always'} onCreated={onCreated}>{/* ... */}</Canvas>
+  {lost && <SceneUnavailable />}
+</div>
 ```
 
-If you are on an older major version, measure before you assume you are safe.
-`renderer.info.programs.length` and `renderer.info.memory.textures` are the two
-numbers that settle after warm-up and should then never move.
+A side effect worth knowing: while the context is gone and the loop is stopped,
+the counters **freeze** rather than fall to zero, because nothing samples them.
+They climb back on restore.
 
-### A restored context is not a restored scene
+One more consequence of that `getExtension` rule, and the reason this demo
+never unmounts its Canvas. Tearing a Canvas down makes r3f call
+`forceContextLoss()`; three.js asks for `WEBGL_lose_context` to carry it out,
+gets `null` back on a context that is already gone, and warns
+`THREE.WebGLRenderer: WEBGL_lose_context extension not supported.` It is
+harmless, but it is noise on a page whose whole argument is that console noise
+is the only signal you get — so the recovery button here restores the context
+and rebuilds the effect chain instead, which reaches the same place without
+spending a line on it.
 
-Getting the canvas painting again is only half of it. Every GPU resource
-created before the loss is gone, and three.js re-uploads only what it still
-holds references to. Anything holding render targets of its own has to be
-rebuilt, and an `EffectComposer` is exactly that.
+Killing the context also makes the calls already in flight fail, which is why
+the probe ignores errors raised while `isContextLost()` is true: a dead context
+refuses everything, and counting that would drown the one number this page
+exists to report.
 
-The demo gives the chain a `key` that changes on every restore, which is the
-blunt and reliable way to make React rebuild it from nothing.
+## 2 — Any depth-reading effect blits a depth texture onto itself, every frame
 
-The counters make it visible: kill the context and both fall to zero, restore
-it and they climb back as the scene re-uploads everything it needs.
-
-### Any depth-reading effect blits a depth texture onto itself, every frame
-
-If your console fills, one line per frame, with
+Turn on **Antialias with SMAA** in the demo and the gl errors counter goes from
+zero to roughly 230 per second. Measured here: 4245 blits and 0 errors on MSAA,
+then 700 blits and **700 errors** in the first three seconds of SMAA. Every
+single blit refused, and the console filling with one line per frame:
 
 ```
 GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
 attachments cannot be the same image.
 ```
 
-it is not your code. Here is the whole chain, and every link is checkable.
+Here is the whole chain, and every link is checkable in `node_modules`.
 
 An effect declaring `EffectAttribute.DEPTH` makes the composer build a
 "stable" depth target, in `EffectComposer.createDepthTexture`:
@@ -145,7 +150,7 @@ this.inputBuffer.depthTexture = inputDepthTexture;
 this.depthRenderTarget = new WebGLRenderTarget(w, h, { depthTexture: stableDepthTexture });
 ```
 
-But `Texture.prototype.copy` in three.js is
+But `Texture.prototype.copy` in three.js is, in part:
 
 ```js
 this.source = source.source;
@@ -153,152 +158,124 @@ this.source = source.source;
 
 A cloned texture **shares its Source**, and three.js allocates one GPU texture
 per Source. So the input buffer's depth texture and the "stable" one are the
-same image on the card. `RenderPass` sets `needsDepthBlit = true`
-unconditionally, so after every scene render the composer calls
-`blitDepthBuffer`, which binds that one image as both `READ_FRAMEBUFFER` and
-`DRAW_FRAMEBUFFER` and asks the driver to copy it onto itself. WebGL refuses,
-politely, sixty times a second.
+same image on the card. `RenderPass` sets `needsDepthBlit` unconditionally, so
+after every scene render the composer calls `blitDepthBuffer`, which binds that
+one image as both `READ_FRAMEBUFFER` and `DRAW_FRAMEBUFFER` and asks the driver
+to copy it onto itself. WebGL refuses, politely, sixty times a second.
 
 Nothing is drawn wrong, which is what makes it easy to dismiss. But the flood
 is expensive enough to leave the tab unable to respond, at which point every
 control on your page looks broken and the cause is nowhere near the controls.
-Chrome eventually gives up printing and says so.
 
-**The list of effects that reach it is longer than you would guess**, and this
-is the part that cost the most time. Grep `EffectAttribute.DEPTH` in
-`postprocessing` 6.39.4 and you get:
+**The list of effects that reach it is longer than you would guess.** Grepping
+`EffectAttribute.DEPTH` in `postprocessing` 6.39.4 gives eight:
 
 `BokehEffect`, `DepthEffect`, `DepthOfFieldEffect`, `GodRaysEffect`,
-`RealisticBokehEffect`, `ShockWaveEffect`, `SSAOEffect`, `SelectiveBloomEffect`,
-and **`SMAAEffect`**.
+`RealisticBokehEffect`, `SelectiveBloomEffect`, `SSAOEffect`, and **`SMAAEffect`**.
 
 SMAA is the ordinary, recommended way to antialias a post-processing chain.
 Nothing about reaching for it looks risky, and it carries the depth attribute
-all the same. Removing selective bloom and switching the tiers to SMAA, which
-is exactly what I did, swapped one broken path for another and changed nothing
-at all. Measured on `postprocessing` 6.39.4 with three 0.169.
+all the same. Removing selective bloom and switching to SMAA — which is exactly
+what I did first — swapped one broken path for another and changed nothing.
 
 Antialias with `multisampling` on the composer instead. MSAA is innocent here:
-the debug hatch reports zero multisampled render targets while the flood is at
-its worst, and the failing call comes from `blitDepthBuffer`, not from the
-resolve path.
+the failing call comes from `blitDepthBuffer`, not from the resolve path, and
+the counter sits at zero with eight MSAA samples running.
 
-The demo therefore uses no depth-reading effect at all. It puts the bloom
-threshold in the gap between what is lit and what emits, which is the more
-durable lesson anyway: an emissive material at 4 and a lit surface topping out
-near 1 leave somewhere for a threshold to land, and no library has to
-cooperate.
+The demo therefore uses no depth-reading effect at all. It separates lamps from
+lit surfaces by putting the bloom threshold in the gap between what is lit and
+what emits, which is the more durable lesson anyway: an emissive material at 4
+and a lit surface topping out near 1 leave somewhere for a threshold to land,
+and no library has to cooperate.
 
-`useSelectionLayer` stays in this library, because the layer mechanism itself
-is sound and is what you want the day the composer stops cloning that texture.
-It also drives selective *lighting* today, which has no such problem.
+## Four claims that did not survive measurement
 
-**How this was found**, because the method matters more than the bug: GL errors
-are printed by the browser and never raised through JavaScript, so nothing that
-watches the console API can see them, and no amount of reading the code was
-going to settle it. Load the demo with `?gl=debug` and it wraps
-`blitFramebuffer`, checks the error queue right after each call, and prints the
-count and the first failing stack five seconds in. That stack named
-`EffectComposer.blitDepthBuffer` in one line, after four wrong theories of mine
-that all sounded reasonable, two of which I had already shipped as fixes.
+Every one of these is repeated widely, and I believed all four. Three of them
+were the load-bearing advice in the first version of this README. Measurement
+is the only reason they are not any more.
 
-### Adding post-processing washes out your colour grade
+**"Call `preventDefault()` on `webglcontextlost` or the loss is permanent."**
+True, and already done for you. On a bare canvas the difference is absolute:
+without the call, `restoreContext()` returns without throwing and without doing
+anything, and `isContextLost()` stays `true` forever; with it, the context comes
+back. But three.js attaches its own `webglcontextlost` listener when the
+renderer is constructed and calls `preventDefault()` inside it - `WebGLRenderer`,
+`onContextLost`, `three.module.js:29380` on 0.169. No three.js or r3f
+application has ever needed to write that line. This claim was the headline of
+this repo until I checked it.
 
-A frequent conclusion is that the effects library "ruins the image". It does
-not. Mounting an `EffectComposer` leaves the renderer on `NoToneMapping`, so
-what you lose is the curve you had before, not something the effects added.
-Putting a `ToneMapping` pass back **inside** the chain restores it. The demo has
-a switch for it, and the difference is not subtle.
+**"Unmount the Canvas and the loss becomes permanent, because you destroy the
+object that receives `webglcontextrestored`."** The reasoning is right and the
+outcome is not. Replacing the `<Canvas>` with a fallback and then restoring: the
+orphaned canvas still receives the event, React mounts a new Canvas, and the
+scene comes back. What it actually costs is a full rebuild - new context, every
+program recompiled, every texture re-uploaded - which is a good reason to cover
+rather than replace, and not the catastrophe the advice describes.
 
-### A luminance threshold cannot tell a lamp from a lit cheek
+**"Rebuild the effect chain after a context restore, or it stays broken."**
+This one is worse than wrong: on these versions it is the destructive option.
+The reasoning is sound - the composer owns render targets that belonged to the
+dead context, and three.js only re-uploads what it still holds references to -
+but leaving the chain alone works. Same composer instance, same image, error
+counter flat.
 
-Bloom sorts by brightness, and brightness does not know intent. Raise the
-threshold until faces stop glowing and the lamps stop glowing too.
+Ask for the rebuild and here is what you buy. The old composer is disposed
+*after* the context has come back, so three.js walks its resources and deletes
+GPU objects belonging to the generation that died, against a context that has
+since been revived. The browser prints
 
-Two ways out. The one that always works: build a gap. Give the things that
-should glow an emissive value well above 1, keep everything else lit under it,
-and put the threshold between them. Nothing has to cooperate.
-
-The one that is nicer in principle and currently broken in practice: sort by
-layer, so what blooms is a decision rather than a number you keep re-tuning.
-
-```jsx
-useSelectionLayer(model, BLOOM_LAYER);
-// …
-<SelectiveBloom selectionLayer={BLOOM_LAYER} lights={lights} mipmapBlur />
+```
+WebGL: INVALID_OPERATION: delete: object does not belong to this context
 ```
 
-Read the section above before reaching for it: on the current release that
-path blits a depth texture onto itself once a frame.
+once per object - forty of them in one run here - followed by
+`deleteVertexArray` failures out of `onGeometryDispose`, and from then on the
+multisample resolve fails on every single frame, which the demo's counter picks
+up as a number that never stops climbing. Toggle **Rebuild the effect chain
+after a restore** and watch it happen.
 
-Three things worth knowing about it anyway. Layers are **per object and not inherited**, so
-enabling one on a group does nothing for its children, hence the traversal in
-the hook. The same mechanism drives selective *lighting*: a light illuminates
-an object only when `light.layers.test(object.layers)` passes, so a light alone
-on a layer lights only the meshes that opted in.
+The timing is the whole story, and it is why this took a bug report from
+someone clicking around to surface at all. Rebuild *while* the context is still
+lost and it is harmless, because a lost context silently ignores every call it
+is given, deletes included. Rebuild *after* the restore and every one of those
+deletes is a real call against a real context that never owned those objects.
+The advice never mentions when, because the person giving it never had a
+counter on the page.
 
-And `SelectiveBloom` wants your **lights** passed to it, not just the
-selection. To isolate the selection it re-renders it into a buffer of its own,
-and by the rule just above, a light that is not on the selection layer does not
-reach it. Handing the lights over is how the library enables that layer on
-them. Omit them and it logs `SelectiveBloom requires lights to work.` on every
-mount; the effect still runs, but only emissive materials contribute, because
-everything else comes out as a black silhouette.
+**"An `EffectComposer` written inline leaks GPU memory."** The claim is that it
+tears its pass list down and rebuilds it on every render of the component
+holding the JSX, and that `removePass` is not paired with a dispose. Two things
+have changed. The teardown effect now calls `removePass` and
+`disposeGeneratedPass` together, so nothing leaks. And the pass list is rebuilt
+on a *diff* of the effect nodes rather than on `children` identity, so an
+ordinary re-render rebuilds nothing at all: patching `addPass`/`removePass` and
+re-rendering the host thirty times a second for five seconds gives **zero** of
+either, while one real change to the chain gives one of each. Memoise your chain
+for the ordinary reasons; this is no longer one of them.
 
-### Order matters more than parameters
+That leaves exactly one failure in this repo that is both silent and genuinely
+destructive, and it is section 2 above. I would rather ship a demo that says so
+than four switches that pretend otherwise.
 
-Run bloom **before** tone mapping. Tone mapping compresses everything into
-0..1, and once it has, a cheek in full moonlight and a lamp are both "about
-0.9": no threshold separates them. Run bloom first and it reads real values,
-where a lit surface tops out near 1 while an emissive material sits at 4. That
-gap is the whole trick.
+A last word on method, since it cost me twice in one evening. I "verified" this
+page by capturing `console.error` and `console.warn` and reporting a clean
+console. That check was worthless: `WebGL: INVALID_OPERATION` never goes through
+the console API, so a wrapper around it sees nothing. Neither does an automated
+console reader driving the browser - I tried, and the deletes are invisible to
+it too. The only two things that caught this were the counter on the page and a
+human being looking at a real console. Which is, uncomfortably, the exact thesis
+of this repo, applied to the repo.
 
-### Canvas props, quietly
 
-react-three-fiber's configuration effect has no dependency array. It replays on
-every render of the component holding the `<Canvas>`, so object literals written
-inline are rebuilt and reapplied several times a second, forever. Hoist them:
+## The device budget
 
-```jsx
-const CAMERA = { position: [0, 2.6, 7], fov: 45 };
-const GL = { antialias: true };
-// …
-<Canvas camera={CAMERA} gl={GL} onCreated={stableCallback} />
-```
+Not a failure you can watch on a desktop, but the one that decides whether a
+phone renders your scene or reloads the tab. `resolveQualityTier` returns
+`'perf'` or `'high'` from the user agent, touch points, cores and device
+memory, and is deliberately free of any `three` import: you usually need the
+tier *before* the Canvas exists, to decide what to mount at all.
 
-`memo` on the surrounding component does not save you here: a memoised
-component that reads a React context still re-renders on every context update.
-
-## API
-
-```js
-import {
-  resolveQualityTier,
-  getQualityProfile,
-  QUALITY_PROFILES,
-  useWebGLContextLoss,
-  useSelectionLayer,
-  loseContext,
-  restoreContext,
-  countPrograms,
-} from 'r3f-resilience';
-```
-
-| Export | What it does |
-| --- | --- |
-| `resolveQualityTier(quality?)` | `'perf'` or `'high'` from user agent, touch, cores and device memory. SSR safe. Pass `'perf'`/`'high'` to force. |
-| `getQualityProfile(quality?)` | Resolves the tier and returns its profile. |
-| `QUALITY_PROFILES` | The two budgets. Spread them to add project flags. |
-| `useWebGLContextLoss(opts?)` | `{ onCreated, lost }`. Hand `onCreated` to the Canvas. |
-| `useSelectionLayer(object, layer, enabled?)` | Enables a layer across a subtree, and disables it on cleanup. |
-| `loseContext(renderer)` | Drops the context via `WEBGL_lose_context`, to test recovery. Returns `false` if unsupported. |
-| `restoreContext(renderer)` | Restores a simulated loss, using the extension captured by `loseContext`. |
-| `countPrograms(renderer)` | Compiled shader programs. Your leak detector. |
-
-`resolveQualityTier` is deliberately free of any `three` import: you usually
-need the tier *before* the Canvas exists, to decide what to mount at all.
-
-The device probe is optimistic on missing data. `hardwareConcurrency` and
+The probe is optimistic on missing data. `hardwareConcurrency` and
 `deviceMemory` are absent on Safari and Firefox, and downgrading whenever they
 are missing would punish every Safari user for their browser's privacy stance.
 Cores alone are a poor signal too, since an eight-core phone is still a phone,
@@ -306,19 +283,67 @@ so the desktop downgrade needs both signals to agree.
 
 In the profiles, `shadows` is by far the heaviest line and it is not close: a
 single shadow-casting point light renders the scene six times per frame, once
-per cube-map face. Everything else in the table put together costs less than
-turning that one flag on, which is why the perf tier drops it first and keeps
-antialiasing.
+per cube-map face. Everything else put together costs less than turning that
+one flag on, which is why the perf tier drops it first and keeps antialiasing.
 
-## What this is not
+## Two image traps, while we are here
 
-Not a renderer, not an engine, not a component library. There is no asset
-loading, no scene graph helper, no state management. It is the handful of things
-that turned out to be load-bearing once the scene had to survive strangers on
-unknown hardware for an hour at a time.
+Neither stops the scene working. Both are routinely blamed on the effects
+library, and neither is its fault.
 
-Requires React 18 or later, three r160 or later, and react-three-fiber 9.
-`@react-three/postprocessing` is only needed for the demo.
+**Adding post-processing washes out your colour grade.** Mounting an
+`EffectComposer` leaves the renderer on `NoToneMapping`, so what you lose is the
+curve you had before, not something the effects added. Put a `ToneMapping` pass
+back *inside* the chain and it returns.
+
+**A luminance threshold cannot tell a lamp from a lit cheek.** Bloom sorts by
+brightness, and brightness does not know intent. Build a gap instead: give what
+should glow an emissive value well above 1, keep everything else under it, and
+put the threshold between them. And run bloom *before* tone mapping — once tone
+mapping has compressed everything into 0..1, a cheek in full moonlight and a
+lamp are both "about 0.9", and no threshold separates them.
+
+Equal emissive intensity does not mean equal brightness to a threshold, either.
+Luminance weights green at 0.72 against 0.21 for red and 0.07 for blue, so at a
+single intensity the demo's amber lamp measured 3.15, the cyan 3.35 and the
+rose 1.73 — and the rose one sat unlit next to two glowing neighbours, which
+reads as a bug because it is one. `demo/Scene.jsx` derives each lamp's
+intensity from its colour instead.
+
+One detail worth knowing if you reach for a layer-based selective effect
+anyway: layers are **per object and not inherited**, so enabling one on a group
+does nothing for its children. The same mechanism drives selective *lighting* —
+a light illuminates an object only when `light.layers.test(object.layers)`
+passes — and that has none of the depth problem above.
+
+## What is in here
+
+`src/` is three small files, kept separate from the demo so the demo imports
+them the way a consumer would. It is not published to npm and is not meant to
+be: copy what you need.
+
+| Export | What it does |
+| --- | --- |
+| `useWebGLContextLoss(opts?)` | `{ onCreated, lost, reset }`. Hand `onCreated` to the Canvas. `recover: false` drops the `preventDefault`, which is what the demo's first switch does. |
+| `resolveQualityTier(quality?)` | `'perf'` or `'high'` from the device. SSR safe. Pass a tier to force it. |
+| `getQualityProfile(quality?)` | Resolves the tier and returns its profile. |
+| `QUALITY_PROFILES` | The two budgets. Spread them to add project flags. |
+| `loseContext` / `restoreContext` | Drop and restore a context on purpose, to exercise recovery. |
+| `countPrograms(renderer)` | Compiled shader programs. Your leak detector. |
+
+There is no renderer here, no engine, no component library, no asset loading
+and no state management. It is the handful of things that turned out to be
+load-bearing once a scene had to survive strangers on unknown hardware.
+
+## Where these numbers come from
+
+Measured in September 2026, on Chrome / Windows 11, with `three` 0.169.0,
+`postprocessing` 6.39.4, `@react-three/postprocessing` 3.1.1 and
+`@react-three/fiber` 9.7.0 — pinned exactly in `package.json`, because three of
+the findings above are statements about specific versions and would be
+worthless without them. One machine, one
+browser. If yours differ, that is what the demo is for: rerun it and see what
+your numbers say.
 
 ## Licence
 
