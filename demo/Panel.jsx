@@ -66,8 +66,8 @@ export default function Panel({
             <dd>{profile.dpr.join(' – ')}</dd>
           </div>
           <div>
-            <dt>multisampling</dt>
-            <dd>{profile.multisampling}</dd>
+            <dt>antialiasing</dt>
+            <dd>{profile.smaa ? 'SMAA' : `MSAA ${profile.multisampling}`}</dd>
           </div>
           <div>
             <dt>shadows</dt>

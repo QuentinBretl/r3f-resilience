@@ -118,14 +118,38 @@ created before the loss is gone, and three.js re-uploads only what it still
 holds references to. Anything holding render targets of its own has to be
 rebuilt, and an `EffectComposer` is exactly that.
 
-Left in place across a loss, it keeps working with buffers that no longer
-exist, and the console fills with `glBlitFramebuffer: Read and write depth
-stencil attachments cannot be the same image`. The demo gives the chain a
-`key` that changes on every restore, which is the blunt and reliable way to
-make React rebuild it from nothing.
+The demo gives the chain a `key` that changes on every restore, which is the
+blunt and reliable way to make React rebuild it from nothing.
 
 The counters make it visible: kill the context and both fall to zero, restore
 it and they climb back as the scene re-uploads everything it needs.
+
+### MSAA in the composer and selection-based effects do not mix
+
+If your console fills, one line per frame, with
+
+```
+GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
+attachments cannot be the same image.
+```
+
+the cause is multisampling. `blitFramebuffer` is called from exactly one place
+in three.js, the path that resolves a multisampled render target, and the
+resolve includes the depth attachment. Put a selection-based effect in the same
+chain, one that re-renders the scene into a buffer of its own, and the read and
+the write end up pointing at the same depth image. WebGL refuses the blit and
+says so, every frame.
+
+Nothing is drawn wrong, which is what makes it easy to dismiss. But the flood
+is expensive enough on its own to leave the tab unable to respond, at which
+point every button on your page looks broken and the real cause is nowhere near
+the buttons.
+
+There is no way to keep both through `@react-three/postprocessing`: the
+renderer decides to resolve depth, and the composer does not expose that
+switch. So `multisampling` is 0 in both profiles here, and antialiasing goes
+through SMAA, a post pass that needs no resolve at all. Raise it only in a
+chain with no selection-based effect.
 
 ### Adding post-processing washes out your colour grade
 

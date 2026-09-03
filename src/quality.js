@@ -61,22 +61,32 @@ export const QUALITY_PROFILES = {
     // into it. [1, 2] means "supersample up to 2x on a 1x screen, never
     // render more than 2x on a retina one".
     dpr: [1, 2],
-    // MSAA samples on the post-processing frame buffer. Ignored when no
-    // EffectComposer is mounted, where `antialias: true` on the renderer does
-    // the same job for free.
-    multisampling: 8,
+    // MSAA samples on the post-processing frame buffer, and zero on purpose.
+    //
+    // Multisampling makes the renderer resolve the buffer with
+    // `blitFramebuffer`, and that resolve includes the depth attachment. Put a
+    // selection-based effect in the same chain, one that re-renders the scene
+    // into a buffer of its own, and the read and the write end up pointing at
+    // the same depth image. WebGL rejects the blit, once per frame, forever:
+    //
+    //   GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
+    //   attachments cannot be the same image.
+    //
+    // Nothing is drawn wrong, but the console floods and the tab can stop
+    // responding. Raise this only in a chain with no such effect; otherwise
+    // antialias through SMAA below, which needs no resolve at all.
+    multisampling: 0,
     shadows: true,
     bloom: true,
-    // SMAA is a post pass that approximates antialiasing from the colour
-    // buffer. Cheaper than MSAA, blurrier. It belongs to the perf tier, which
-    // has multisampling turned off.
-    smaa: false,
+    // A post pass that approximates antialiasing from the colour buffer.
+    // Cheaper than MSAA, slightly softer, and it costs no framebuffer resolve.
+    smaa: true,
     vignette: 0.45,
     grain: 0.05,
   },
   perf: {
     dpr: [1, 1.5],
-    multisampling: 0,
+    multisampling: 0,  // same reason as above, plus the cost
     shadows: false,
     bloom: false,
     smaa: true,
