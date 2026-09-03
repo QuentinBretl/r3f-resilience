@@ -61,8 +61,10 @@ export function armGLDebug() {
     console.log('[glDebug] blitFramebuffer calls:', report.blitCalls,
       '| errors right after a blit:', report.blitErrors,
       '| multisampled render targets:', [...new Set(report.renderTargetSamples)]);
-    if (report.firstBlitStack) console.log('[glDebug] first failing blit:
-' + report.firstBlitStack);
+    if (report.firstBlitStack) {
+      console.log('[glDebug] first failing blit:');
+      console.log(report.firstBlitStack);
+    }
   };
   setTimeout(dump, 5000);
   setTimeout(dump, 15000);
