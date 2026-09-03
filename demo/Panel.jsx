@@ -19,12 +19,12 @@ export default function Panel({
   resolved,
   profile,
   stats,
-  selective,
+  aboveLit,
   toneMapping,
   churn,
   memoise,
   onTier,
-  onSelective,
+  onAboveLit,
   onToneMapping,
   onChurn,
   onMemoise,
@@ -156,10 +156,10 @@ export default function Panel({
         />
 
         <Toggle
-          label="Selective bloom"
-          hint="On: only objects on the bloom layer glow. Off: a plain threshold, which cannot tell a lamp from a pale surface in bright light."
-          checked={selective}
-          onChange={onSelective}
+          label="Bloom threshold above the lit surfaces"
+          hint="On: only the emissive spheres glow. Off: the threshold drops under what the key light produces, and the pale centrepiece smears with them."
+          checked={aboveLit}
+          onChange={onAboveLit}
         />
       </section>
 

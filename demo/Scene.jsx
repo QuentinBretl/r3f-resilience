@@ -1,9 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useStore, useThree } from '@react-three/fiber';
-import { countPrograms, useSelectionLayer } from 'r3f-resilience';
-
-// Layer 0 is where every object already lives. Anything from 1 to 31 is free.
-export const BLOOM_LAYER = 11;
+import { countPrograms } from 'r3f-resilience';
 
 const LAMP_COLOURS = ['#ffb02e', '#4dd4ff', '#ff5470'];
 
@@ -11,25 +8,15 @@ const LAMP_COLOURS = ['#ffb02e', '#4dd4ff', '#ff5470'];
  * Three orbiting emissive spheres. They are the only objects that should ever
  * bloom, and the demo lets you check that claim both ways.
  */
-function Lamps({ selective }) {
+function Lamps() {
   const group = useRef(null);
-  // A state ref rather than a plain one: useSelectionLayer needs to re-run
-  // when the object actually exists, and a ref mutation does not re-render.
-  const [root, setRoot] = useState(null);
-
-  useSelectionLayer(root, BLOOM_LAYER, selective);
 
   useFrame(({ clock }) => {
     if (group.current) group.current.rotation.y = clock.elapsedTime * 0.35;
   });
 
   return (
-    <group
-      ref={(node) => {
-        group.current = node;
-        setRoot(node);
-      }}
-    >
+    <group ref={group}>
       {LAMP_COLOURS.map((colour, index) => {
         const angle = (index / LAMP_COLOURS.length) * Math.PI * 2;
         return (
@@ -38,9 +25,9 @@ function Lamps({ selective }) {
             position={[Math.cos(angle) * 2.6, 1.1, Math.sin(angle) * 2.6]}
           >
             <sphereGeometry args={[0.28, 32, 32]} />
-            {/* Emissive well above 1 so it clears the bloom threshold while
-                the lit surfaces below stay under it. That gap is what makes
-                selective bloom look deliberate instead of hazy. */}
+            {/* Emissive at 4, well above anything the key light produces on
+                a surface. That gap is what lets a threshold separate a lamp
+                from a brightly lit object. */}
             <meshStandardMaterial
               color="#0a0a10"
               emissive={colour}
@@ -123,7 +110,7 @@ function Readout({ onSample }) {
   return null;
 }
 
-export default function Scene({ profile, selective, onSample }) {
+export default function Scene({ profile, onSample }) {
   // Geometry-free: nothing is loaded from disk, so the repository stays a few
   // kilobytes and the demo boots instantly on a cold cache.
   const ground = useMemo(() => [14, 14], []);
@@ -143,7 +130,7 @@ export default function Scene({ profile, selective, onSample }) {
       />
 
       <Centrepiece />
-      <Lamps selective={selective} />
+      <Lamps />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={ground} />

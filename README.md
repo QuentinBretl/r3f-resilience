@@ -124,7 +124,7 @@ blunt and reliable way to make React rebuild it from nothing.
 The counters make it visible: kill the context and both fall to zero, restore
 it and they climb back as the scene re-uploads everything it needs.
 
-### MSAA in the composer and selection-based effects do not mix
+### Selective bloom blits a depth texture onto itself, every frame
 
 If your console fills, one line per frame, with
 
@@ -133,23 +133,59 @@ GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
 attachments cannot be the same image.
 ```
 
-the cause is multisampling. `blitFramebuffer` is called from exactly one place
-in three.js, the path that resolves a multisampled render target, and the
-resolve includes the depth attachment. Put a selection-based effect in the same
-chain, one that re-renders the scene into a buffer of its own, and the read and
-the write end up pointing at the same depth image. WebGL refuses the blit and
-says so, every frame.
+it is not your code. Here is the whole chain, and every link is checkable.
+
+`SelectiveBloomEffect` declares `EffectAttribute.DEPTH`, because it re-renders
+the scene and needs the depth buffer. The composer answers that by building a
+"stable" depth target, in `EffectComposer.createDepthTexture`:
+
+```js
+const inputDepthTexture = new DepthTexture();
+const stableDepthTexture = inputDepthTexture.clone();   // ← the bug
+this.inputBuffer.depthTexture = inputDepthTexture;
+this.depthRenderTarget = new WebGLRenderTarget(w, h, { depthTexture: stableDepthTexture });
+```
+
+But `Texture.prototype.copy` in three.js is
+
+```js
+this.source = source.source;
+```
+
+A cloned texture **shares its Source**, and three.js allocates one GPU texture
+per Source. So the input buffer's depth texture and the "stable" one are the
+same image on the card. `RenderPass` sets `needsDepthBlit = true`
+unconditionally, so after every scene render the composer calls
+`blitDepthBuffer`, which binds that one image as both `READ_FRAMEBUFFER` and
+`DRAW_FRAMEBUFFER` and asks the driver to copy it onto itself. WebGL refuses,
+politely, sixty times a second.
 
 Nothing is drawn wrong, which is what makes it easy to dismiss. But the flood
-is expensive enough on its own to leave the tab unable to respond, at which
-point every button on your page looks broken and the real cause is nowhere near
-the buttons.
+is expensive enough to leave the tab unable to respond, at which point every
+control on your page looks broken and the cause is nowhere near the controls.
+Chrome eventually gives up printing and says so.
 
-There is no way to keep both through `@react-three/postprocessing`: the
-renderer decides to resolve depth, and the composer does not expose that
-switch. So `multisampling` is 0 in both profiles here, and antialiasing goes
-through SMAA, a post pass that needs no resolve at all. Raise it only in a
-chain with no selection-based effect.
+Any effect carrying `EffectAttribute.DEPTH` reaches it: depth of field, god
+rays, SSAO, selective bloom. Measured on `postprocessing` 6.39.4 with
+three 0.169.
+
+The demo therefore does not use `SelectiveBloom`. It puts the bloom threshold
+in the gap between what is lit and what emits instead, which is the more
+durable lesson: an emissive material at 4 and a lit surface topping out near 1
+leave somewhere for a threshold to land, and no library has to cooperate.
+
+`useSelectionLayer` stays in this library, because the layer mechanism itself
+is sound and is what you want the day the composer stops cloning that texture.
+It also drives selective *lighting* today, which has no such problem.
+
+**How this was found**, because the method matters more than the bug: GL errors
+are printed by the browser and never raised through JavaScript, so nothing that
+watches the console API can see them, and no amount of reading the code was
+going to settle it. Load the demo with `?gl=debug` and it wraps
+`blitFramebuffer`, checks the error queue right after each call, and prints the
+count and the first failing stack five seconds in. That stack named
+`EffectComposer.blitDepthBuffer` in one line, after three wrong theories of
+mine that all sounded reasonable.
 
 ### Adding post-processing washes out your colour grade
 
@@ -162,17 +198,25 @@ a switch for it, and the difference is not subtle.
 ### A luminance threshold cannot tell a lamp from a lit cheek
 
 Bloom sorts by brightness, and brightness does not know intent. Raise the
-threshold until faces stop glowing and the lamps stop glowing too. Sort by
-layer instead, and what blooms becomes a decision rather than a number you keep
-re-tuning:
+threshold until faces stop glowing and the lamps stop glowing too.
+
+Two ways out. The one that always works: build a gap. Give the things that
+should glow an emissive value well above 1, keep everything else lit under it,
+and put the threshold between them. Nothing has to cooperate.
+
+The one that is nicer in principle and currently broken in practice: sort by
+layer, so what blooms is a decision rather than a number you keep re-tuning.
 
 ```jsx
 useSelectionLayer(model, BLOOM_LAYER);
 // …
-<SelectiveBloom selectionLayer={BLOOM_LAYER} luminanceThreshold={0.6} mipmapBlur />
+<SelectiveBloom selectionLayer={BLOOM_LAYER} lights={lights} mipmapBlur />
 ```
 
-Three things worth knowing. Layers are **per object and not inherited**, so
+Read the section above before reaching for it: on the current release that
+path blits a depth texture onto itself once a frame.
+
+Three things worth knowing about it anyway. Layers are **per object and not inherited**, so
 enabling one on a group does nothing for its children, hence the traversal in
 the hook. The same mechanism drives selective *lighting*: a light illuminates
 an object only when `light.layers.test(object.layers)` passes, so a light alone

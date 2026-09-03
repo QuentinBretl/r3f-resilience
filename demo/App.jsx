@@ -24,7 +24,7 @@ const CANVAS_STYLE = { position: 'absolute', inset: 0 };
 
 export default function App() {
   const [tier, setTier] = useState('auto');
-  const [selective, setSelective] = useState(true);
+  const [aboveLit, setAboveLit] = useState(true);
   const [toneMapping, setToneMapping] = useState(true);
   const [churn, setChurn] = useState(false);
   const [memoise, setMemoise] = useState(true);
@@ -87,11 +87,11 @@ export default function App() {
           style={CANVAS_STYLE}
           onCreated={handleCreated}
         >
-          <Scene profile={profile} selective={selective} onSample={onSample} />
+          <Scene profile={profile} onSample={onSample} />
           <EffectsHost
             key={generation}
             profile={profile}
-            selective={selective}
+            aboveLit={aboveLit}
             toneMapping={toneMapping}
             churn={churn}
             memoise={memoise}
@@ -120,12 +120,12 @@ export default function App() {
         resolved={resolved}
         profile={profile}
         stats={stats}
-        selective={selective}
+        aboveLit={aboveLit}
         toneMapping={toneMapping}
         churn={churn}
         memoise={memoise}
         onTier={setTier}
-        onSelective={setSelective}
+        onAboveLit={setAboveLit}
         onToneMapping={setToneMapping}
         onChurn={setChurn}
         onMemoise={setMemoise}
