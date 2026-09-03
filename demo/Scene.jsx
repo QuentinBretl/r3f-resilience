@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useStore, useThree } from '@react-three/fiber';
 import { countPrograms, useSelectionLayer } from 'r3f-resilience';
 
 // Layer 0 is where every object already lives. Anything from 1 to 31 is free.
@@ -84,6 +84,18 @@ function Centrepiece() {
  */
 function Readout({ onSample }) {
   const gl = useThree((state) => state.gl);
+  const store = useStore();
+
+  // Debug hatch, armed only by ?gl= in the URL. Hands the r3f store to the
+  // console so a frame can be forced by hand: an automated browser throttles
+  // requestAnimationFrame in an unfocused window, and a scene that never
+  // renders cannot be measured.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('gl')) {
+      window.__r3f = store;
+    }
+  }, [store]);
+
   const last = useRef(0);
   const frames = useRef(0);
   const since = useRef(0);
