@@ -138,11 +138,11 @@ export default function Panel({
         {churn && !memoise && (
           <p className="warn">
             Rebuilding the chain 30×/s. The counters above are the point: on
-            @react-three/postprocessing 3.0.4 they stay flat, because the
-            composer now disposes what it removes. The widely repeated claim
-            that this leaks GPU memory is out of date on this version. What it
-            does cost is a pass teardown and shader recompilation per render,
-            which is CPU time and frame pacing.
+            the versions pinned here they stay flat, because the composer
+            disposes what it removes. The widely repeated claim that this leaks
+            GPU memory is out of date. What it does cost is a pass teardown and
+            a shader recompilation per render, which is CPU time and frame
+            pacing.
           </p>
         )}
       </section>

@@ -86,7 +86,7 @@ message, tears its passes down and builds them again several times a second.
 
 The widely repeated conclusion is that this leaks GPU memory, on the grounds
 that `removePass` is not paired with a dispose. **I measured it, and on
-`@react-three/postprocessing` 3.0.4 that is no longer true.** The teardown
+`@react-three/postprocessing` 3.1.1 that is no longer true.** The teardown
 effect calls `removePass` and `disposeGeneratedPass` together, and with the
 chain rebuilt thirty times a second in the demo, both the shader program count
 and the texture count stay flat. The counters are on screen so you can check
