@@ -111,6 +111,22 @@ If you are on an older major version, measure before you assume you are safe.
 `renderer.info.programs.length` and `renderer.info.memory.textures` are the two
 numbers that settle after warm-up and should then never move.
 
+### A restored context is not a restored scene
+
+Getting the canvas painting again is only half of it. Every GPU resource
+created before the loss is gone, and three.js re-uploads only what it still
+holds references to. Anything holding render targets of its own has to be
+rebuilt, and an `EffectComposer` is exactly that.
+
+Left in place across a loss, it keeps working with buffers that no longer
+exist, and the console fills with `glBlitFramebuffer: Read and write depth
+stencil attachments cannot be the same image`. The demo gives the chain a
+`key` that changes on every restore, which is the blunt and reliable way to
+make React rebuild it from nothing.
+
+The counters make it visible: kill the context and both fall to zero, restore
+it and they climb back as the scene re-uploads everything it needs.
+
 ### Adding post-processing washes out your colour grade
 
 A frequent conclusion is that the effects library "ruins the image". It does
@@ -132,11 +148,19 @@ useSelectionLayer(model, BLOOM_LAYER);
 <SelectiveBloom selectionLayer={BLOOM_LAYER} luminanceThreshold={0.6} mipmapBlur />
 ```
 
-Two things worth knowing. Layers are **per object and not inherited**, so
+Three things worth knowing. Layers are **per object and not inherited**, so
 enabling one on a group does nothing for its children, hence the traversal in
-the hook. And the same mechanism drives selective *lighting*: a light
-illuminates an object only when `light.layers.test(object.layers)` passes, so a
-light alone on a layer lights only the meshes that opted in.
+the hook. The same mechanism drives selective *lighting*: a light illuminates
+an object only when `light.layers.test(object.layers)` passes, so a light alone
+on a layer lights only the meshes that opted in.
+
+And `SelectiveBloom` wants your **lights** passed to it, not just the
+selection. To isolate the selection it re-renders it into a buffer of its own,
+and by the rule just above, a light that is not on the selection layer does not
+reach it. Handing the lights over is how the library enables that layer on
+them. Omit them and it logs `SelectiveBloom requires lights to work.` on every
+mount; the effect still runs, but only emissive materials contribute, because
+everything else comes out as a black silhouette.
 
 ### Order matters more than parameters
 

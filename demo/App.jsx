@@ -32,7 +32,20 @@ export default function App() {
 
   const rendererRef = useRef(null);
 
-  const { onCreated: attachContextLoss, lost } = useWebGLContextLoss();
+  // Incrémenté à chaque restauration, et utilisé comme `key` sur la chaîne
+  // d'effets.
+  //
+  // Restaurer le contexte ramène la scène, mais pas ce que la chaîne de
+  // post-traitement s'était allouée : ses cibles de rendu appartenaient au
+  // contexte disparu. three.js réenvoie ce qu'il référence encore, le
+  // composer non. Laissé en place, il continue de mélanger des tampons qui
+  // n'existent plus, ce qui inonde la console d'erreurs de blit. Changer sa
+  // `key` le démonte et le reconstruit proprement.
+  const [generation, setGeneration] = useState(0);
+
+  const { onCreated: attachContextLoss, lost } = useWebGLContextLoss({
+    onRestored: () => setGeneration((n) => n + 1),
+  });
 
   // One stable callback for both jobs: r3f keeps whichever it was handed on
   // its last configuration pass, so this must not be recreated per render.
@@ -76,6 +89,7 @@ export default function App() {
         >
           <Scene profile={profile} selective={selective} onSample={onSample} />
           <EffectsHost
+            key={generation}
             profile={profile}
             selective={selective}
             toneMapping={toneMapping}

@@ -1,4 +1,5 @@
-import { memo, useEffect, useReducer } from 'react';
+import { memo, useEffect, useReducer, useState } from 'react';
+import { useThree } from '@react-three/fiber';
 import {
   Bloom,
   EffectComposer,
@@ -11,6 +12,34 @@ import {
 import { BlendFunction, ToneMappingMode } from 'postprocessing';
 import { BLOOM_LAYER } from './Scene.jsx';
 
+// The lights of the scene, collected once they are attached.
+//
+// SelectiveBloom needs them, and the reason is worth knowing: to isolate the
+// selection it re-renders it into a buffer of its own, and a light only
+// illuminates an object when the two share a layer. Handing the lights over is
+// how the library enables the selection layer on them, so the selected objects
+// come out lit rather than as black silhouettes. Omit them and the library
+// warns; the effect still runs, but only emissive materials contribute.
+//
+// An effect and not a render-time traversal: r3f attaches objects to the scene
+// during commit, so at render time the lights are not there yet.
+const NO_LIGHTS = [];
+
+function useSceneLights() {
+  const scene = useThree((state) => state.scene);
+  const [lights, setLights] = useState(NO_LIGHTS);
+
+  useEffect(() => {
+    const found = [];
+    scene.traverse((object) => {
+      if (object.isLight) found.push(object);
+    });
+    setLights(found.length ? found : NO_LIGHTS);
+  }, [scene]);
+
+  return lights;
+}
+
 /**
  * The chain itself.
  *
@@ -21,12 +50,15 @@ import { BLOOM_LAYER } from './Scene.jsx';
  * has somewhere to land.
  */
 function EffectChain({ profile, selective, toneMapping }) {
+  const lights = useSceneLights();
+
   return (
     <EffectComposer multisampling={profile.multisampling}>
       {profile.bloom &&
         (selective ? (
           <SelectiveBloom
             selectionLayer={BLOOM_LAYER}
+            lights={lights}
             intensity={2.4}
             luminanceThreshold={0.6}
             luminanceSmoothing={0.3}
