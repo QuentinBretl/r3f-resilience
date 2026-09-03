@@ -1,0 +1,38 @@
+name: findings
+
+# The claims in the README are measurements, and a measurement nobody repeats
+# is a story. This runs the demo in a real browser and reads the same counter a
+# visitor reads.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      # CI has no GPU, so this renders through SwiftShader. The depth-blit
+      # failure shows up there too — 15 refused calls headless against 686 on a
+      # discrete card — because it is a specification violation rather than a
+      # driver quirk.
+      - run: npm test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

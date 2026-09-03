@@ -2,14 +2,17 @@
 
 **[Open the live demo →](https://r3f-resilience.vercel.app/)**
 
+[![findings](https://github.com/QuentinBretl/r3f-resilience/actions/workflows/test.yml/badge.svg)](https://github.com/QuentinBretl/r3f-resilience/actions/workflows/test.yml)
+
 A React Three Fiber scene that breaks on purpose. One WebGL failure that nothing
 in JavaScript can see, one that floods the driver until the tab gives up, and a
 counter on the page that lets you watch both happen.
 
 ![The demo running: an emissive scene with the live counters reading zero GL errors](docs/demo.jpg)
 
-It comes out of Lycanthropia, a multiplayer browser game where this happened for
-real, on other people's hardware, during sessions that lasted an hour. What made
+It comes out of Lycanthropia, a 40k-line multiplayer browser game — private, and
+staying that way — where this happened for real, on other people's hardware,
+during sessions that lasted an hour. What made
 these failures expensive was not that they are hard to fix. It is that **nothing
 in JavaScript ever sees them**: no exception, no error boundary, no rejected
 promise, no failed request. The scene stops being right, the logs stay clean, and
@@ -92,6 +95,12 @@ Turn on **Antialias with SMAA** and the counter goes from zero to roughly 230 pe
 second. Measured here: 4245 blits and 0 errors on MSAA, then 700 blits and
 **700 errors** in the first three seconds of SMAA. Every single blit refused.
 
+It is not a driver quirk. The same `GL_INVALID_OPERATION` appears on a discrete
+AMD card and on SwiftShader, the software rasteriser CI renders with — 686
+refused calls against 15 in the same wall time, the difference being frames
+drawn, not behaviour. A software renderer refusing it is what makes this a
+specification violation rather than a vendor bug.
+
 ![The same panel with SMAA enabled: the gl errors cell is red and climbing](docs/gl-errors.jpg)
 
 The short version: an effect declaring `EffectAttribute.DEPTH` makes the composer
@@ -158,6 +167,26 @@ scene had to survive strangers on unknown hardware.
 
 The device-quality tiers and two colour traps that get blamed on the effects
 library are in [FINDINGS.md](FINDINGS.md) as well.
+
+## The claims are tested
+
+A repository whose argument is "stop believing this and count it" has no business
+asserting any of it by hand. `npm test` drives the built demo in a real browser
+and reads the same counter a visitor reads:
+
+```bash
+npm test
+```
+
+Five specs, run on every push: the scene renders with zero refused calls and
+flat program counts; SMAA makes that counter climb and MSAA does not; a lost
+context raises a notice when the application looks for it and nothing at all
+when it does not; the effect chain survives a loss without being rebuilt; and
+the quality tiers change the budget they advertise.
+
+They are checked against mutation rather than trusted: neutralising the SMAA
+effect fails the second spec, and making the notice ignore the detection switch
+fails the third.
 
 ## Where these numbers come from
 
