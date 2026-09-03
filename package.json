@@ -5,7 +5,7 @@
   "description": "Two silent WebGL failures reproduced on purpose in a React Three Fiber demo, and two widely repeated fixes that measurement does not support.",
   "type": "module",
   "license": "MIT",
-  "author": "Quentin Bretl",
+  "author": "Quentin Bretellle",
   "keywords": [
     "react-three-fiber",
     "threejs",
