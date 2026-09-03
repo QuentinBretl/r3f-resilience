@@ -1,8 +1,26 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useStore, useThree } from '@react-three/fiber';
+import { Color } from 'three';
 import { countPrograms } from 'r3f-resilience';
 
 const LAMP_COLOURS = ['#ffb02e', '#4dd4ff', '#ff5470'];
+
+// Every lamp lands on this luminance, whatever its colour.
+const LAMP_LUMINANCE = 3.2;
+
+// Equal emissive intensity does NOT mean equal brightness to a bloom
+// threshold. Luminance weights green at 0.72 against 0.21 for red and 0.07 for
+// blue, and three.js works in linear space, so at intensity 6 the amber lamp
+// measured 3.15, the cyan 3.35 and the rose 1.73. The rose one fell inside the
+// threshold's smoothing ramp and sat there unlit next to two glowing
+// neighbours, which reads as a bug because it is one.
+//
+// Deriving the intensity from the colour puts all three on the same line, and
+// leaves the threshold a gap it can actually rely on.
+function lampIntensity(hex) {
+  const { r, g, b } = new Color(hex);
+  return LAMP_LUMINANCE / (0.2126 * r + 0.7152 * g + 0.0722 * b);
+}
 
 /**
  * Three orbiting emissive spheres. They are the only objects that should ever
@@ -25,13 +43,13 @@ function Lamps() {
             position={[Math.cos(angle) * 2.6, 1.1, Math.sin(angle) * 2.6]}
           >
             <sphereGeometry args={[0.28, 32, 32]} />
-            {/* Emissive at 4, well above anything the key light produces on
-                a surface. That gap is what lets a threshold separate a lamp
-                from a brightly lit object. */}
+            {/* Emissive well above anything the key light produces on a
+                surface. That gap is what lets a threshold separate a lamp from
+                a brightly lit object. */}
             <meshStandardMaterial
               color="#0a0a10"
               emissive={colour}
-              emissiveIntensity={4}
+              emissiveIntensity={lampIntensity(colour)}
               roughness={0.4}
             />
           </mesh>

@@ -36,10 +36,11 @@ function EffectChain({ profile, aboveLit, toneMapping }) {
       {profile.bloom && (
         <Bloom
           intensity={2.4}
-          // 1.6 sits above every lit surface and below the emissive spheres,
-          // so only what emits glows. 0.15 sits under both, which is the naive
-          // setting: the pale centrepiece, merely lit, smears like a lamp.
-          luminanceThreshold={aboveLit ? 1.6 : 0.15}
+          // 2.2 sits above every lit surface and below the dimmest of the
+          // three lamps, so only what emits glows. 0.15 sits under both, which
+          // is the naive setting: the pale centrepiece, merely lit, smears
+          // like a lamp.
+          luminanceThreshold={aboveLit ? 2.2 : 0.15}
           luminanceSmoothing={0.3}
           radius={0.8}
           mipmapBlur
