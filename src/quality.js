@@ -61,35 +61,38 @@ export const QUALITY_PROFILES = {
     // into it. [1, 2] means "supersample up to 2x on a 1x screen, never
     // render more than 2x on a retina one".
     dpr: [1, 2],
-    // MSAA samples on the post-processing frame buffer, and zero on purpose.
-    //
-    // Multisampling makes the renderer resolve the buffer with
-    // `blitFramebuffer`, and that resolve includes the depth attachment. Put a
-    // selection-based effect in the same chain, one that re-renders the scene
-    // into a buffer of its own, and the read and the write end up pointing at
-    // the same depth image. WebGL rejects the blit, once per frame, forever:
-    //
-    //   GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
-    //   attachments cannot be the same image.
-    //
-    // Nothing is drawn wrong, but the console floods and the tab can stop
-    // responding. Raise this only in a chain with no such effect; otherwise
-    // antialias through SMAA below, which needs no resolve at all.
-    multisampling: 0,
+    // MSAA samples on the post-processing frame buffer. This is the safe way
+    // to antialias a chain, and the reason is on the line below.
+    multisampling: 8,
     shadows: true,
     bloom: true,
-    // A post pass that approximates antialiasing from the colour buffer.
-    // Cheaper than MSAA, slightly softer, and it costs no framebuffer resolve.
-    smaa: true,
+    // SMAA is OFF, and not for a quality reason.
+    //
+    // SMAAEffect declares `EffectAttribute.CONVOLUTION | EffectAttribute.DEPTH`.
+    // The depth attribute is what matters: it makes the composer build a
+    // "stable" depth target by cloning the input buffer's depth texture, and a
+    // cloned three.js texture shares its Source, so the two are one image on
+    // the card. The composer then blits that image onto itself once per frame
+    // and the console fills with GL_INVALID_OPERATION until the tab stops
+    // responding. The README has the full trace.
+    //
+    // The trap is that SMAA is the ordinary, recommended way to antialias a
+    // post-processing chain, so nothing about reaching for it looks risky.
+    // Every effect carrying DEPTH reaches the same place: depth of field,
+    // god rays, SSAO, bokeh, shock wave, selective bloom, and SMAA.
+    smaa: false,
     vignette: 0.45,
     grain: 0.05,
   },
   perf: {
     dpr: [1, 1.5],
-    multisampling: 0,  // same reason as above, plus the cost
+    // No antialiasing at all on this tier: MSAA is the expensive line and SMAA
+    // is unusable for the reason above. Aliased edges on a phone are a fair
+    // trade for a frame rate.
+    multisampling: 0,
     shadows: false,
     bloom: false,
-    smaa: true,
+    smaa: false,
     vignette: 0.35,
     grain: 0,
   },

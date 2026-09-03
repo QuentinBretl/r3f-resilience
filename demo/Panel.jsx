@@ -67,7 +67,9 @@ export default function Panel({
           </div>
           <div>
             <dt>antialiasing</dt>
-            <dd>{profile.smaa ? 'SMAA' : `MSAA ${profile.multisampling}`}</dd>
+            <dd>
+              {profile.multisampling ? `MSAA ${profile.multisampling}` : 'none'}
+            </dd>
           </div>
           <div>
             <dt>shadows</dt>

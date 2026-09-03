@@ -124,7 +124,7 @@ blunt and reliable way to make React rebuild it from nothing.
 The counters make it visible: kill the context and both fall to zero, restore
 it and they climb back as the scene re-uploads everything it needs.
 
-### Selective bloom blits a depth texture onto itself, every frame
+### Any depth-reading effect blits a depth texture onto itself, every frame
 
 If your console fills, one line per frame, with
 
@@ -135,8 +135,7 @@ attachments cannot be the same image.
 
 it is not your code. Here is the whole chain, and every link is checkable.
 
-`SelectiveBloomEffect` declares `EffectAttribute.DEPTH`, because it re-renders
-the scene and needs the depth buffer. The composer answers that by building a
+An effect declaring `EffectAttribute.DEPTH` makes the composer build a
 "stable" depth target, in `EffectComposer.createDepthTexture`:
 
 ```js
@@ -165,14 +164,30 @@ is expensive enough to leave the tab unable to respond, at which point every
 control on your page looks broken and the cause is nowhere near the controls.
 Chrome eventually gives up printing and says so.
 
-Any effect carrying `EffectAttribute.DEPTH` reaches it: depth of field, god
-rays, SSAO, selective bloom. Measured on `postprocessing` 6.39.4 with
-three 0.169.
+**The list of effects that reach it is longer than you would guess**, and this
+is the part that cost the most time. Grep `EffectAttribute.DEPTH` in
+`postprocessing` 6.39.4 and you get:
 
-The demo therefore does not use `SelectiveBloom`. It puts the bloom threshold
-in the gap between what is lit and what emits instead, which is the more
-durable lesson: an emissive material at 4 and a lit surface topping out near 1
-leave somewhere for a threshold to land, and no library has to cooperate.
+`BokehEffect`, `DepthEffect`, `DepthOfFieldEffect`, `GodRaysEffect`,
+`RealisticBokehEffect`, `ShockWaveEffect`, `SSAOEffect`, `SelectiveBloomEffect`,
+and **`SMAAEffect`**.
+
+SMAA is the ordinary, recommended way to antialias a post-processing chain.
+Nothing about reaching for it looks risky, and it carries the depth attribute
+all the same. Removing selective bloom and switching the tiers to SMAA, which
+is exactly what I did, swapped one broken path for another and changed nothing
+at all. Measured on `postprocessing` 6.39.4 with three 0.169.
+
+Antialias with `multisampling` on the composer instead. MSAA is innocent here:
+the debug hatch reports zero multisampled render targets while the flood is at
+its worst, and the failing call comes from `blitDepthBuffer`, not from the
+resolve path.
+
+The demo therefore uses no depth-reading effect at all. It puts the bloom
+threshold in the gap between what is lit and what emits, which is the more
+durable lesson anyway: an emissive material at 4 and a lit surface topping out
+near 1 leave somewhere for a threshold to land, and no library has to
+cooperate.
 
 `useSelectionLayer` stays in this library, because the layer mechanism itself
 is sound and is what you want the day the composer stops cloning that texture.
@@ -184,8 +199,8 @@ watches the console API can see them, and no amount of reading the code was
 going to settle it. Load the demo with `?gl=debug` and it wraps
 `blitFramebuffer`, checks the error queue right after each call, and prints the
 count and the first failing stack five seconds in. That stack named
-`EffectComposer.blitDepthBuffer` in one line, after three wrong theories of
-mine that all sounded reasonable.
+`EffectComposer.blitDepthBuffer` in one line, after four wrong theories of mine
+that all sounded reasonable, two of which I had already shipped as fixes.
 
 ### Adding post-processing washes out your colour grade
 
