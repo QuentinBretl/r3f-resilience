@@ -88,14 +88,21 @@ export default function App() {
           onCreated={handleCreated}
         >
           <Scene profile={profile} onSample={onSample} />
-          <EffectsHost
-            key={generation}
-            profile={profile}
-            aboveLit={aboveLit}
-            toneMapping={toneMapping}
-            churn={churn}
-            memoise={memoise}
-          />
+          {/* Unmounted while the context is gone. The chain holds render
+              targets belonging to a context that no longer exists, and any
+              change to it, toggling the memoisation for instance, rebuilds
+              passes against a dead renderer. `key` then rebuilds it cleanly
+              on restore. */}
+          {!lost && (
+            <EffectsHost
+              key={generation}
+              profile={profile}
+              aboveLit={aboveLit}
+              toneMapping={toneMapping}
+              churn={churn}
+              memoise={memoise}
+            />
+          )}
         </Canvas>
 
         {lost && (

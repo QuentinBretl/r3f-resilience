@@ -152,14 +152,14 @@ export default function Panel({
 
         <Toggle
           label="Tone mapping inside the chain"
-          hint="An EffectComposer leaves the renderer on NoToneMapping. Turn this off to see the washed-out image people blame on the effects."
+          hint="Watch the blacks lift and the colours go flat. Mounting an EffectComposer drops the renderer's tone curve, so what you lose here is what you had before adding effects at all, not something the effects did."
           checked={toneMapping}
           onChange={onToneMapping}
         />
 
         <Toggle
           label="Bloom threshold above the lit surfaces"
-          hint="On: only the emissive spheres glow. Off: the threshold drops under what the key light produces, and the pale centrepiece smears with them."
+          hint="Watch the knot in the middle, not the spheres. On, only what emits glows. Off, the threshold drops below what the key light produces and the knot smears like a lamp."
           checked={aboveLit}
           onChange={onAboveLit}
         />
