@@ -1,4 +1,4 @@
-import { memo, useEffect, useReducer } from 'react';
+import { memo } from 'react';
 import {
   Bloom,
   EffectComposer,
@@ -9,20 +9,14 @@ import {
 } from '@react-three/postprocessing';
 import { BlendFunction, ToneMappingMode } from 'postprocessing';
 
-// No SelectiveBloom here, and that is a finding rather than a preference.
-//
-// On postprocessing 6.39.4 it declares EffectAttribute.DEPTH, which makes the
-// composer build a "stable" depth target by CLONING the input buffer's depth
-// texture. A cloned three.js texture shares its Source, so both map to the
-// same GPU image, and the composer then blits that image onto itself once per
-// frame. WebGL refuses, the console floods, and the tab stops responding. The
-// README walks the whole trace.
-//
-// The same visual point is made below with a threshold placed in the gap
-// between what is lit and what emits, which is the more useful lesson anyway.
-
 /**
- * The chain itself.
+ * The post-processing chain.
+ *
+ * Memoised, and given props whose identity is stable, because an
+ * EffectComposer rebuilds its pass list whenever the effect nodes change. On
+ * the version pinned here that comparison is a real diff rather than an
+ * identity check, so a re-render alone no longer costs anything — but the
+ * habit is free and the diff is not guaranteed by any API contract.
  *
  * Note the order: bloom BEFORE tone mapping. Tone mapping compresses the image
  * into 0..1, and once it has, a cheek in full moonlight and a lamp are both
@@ -30,9 +24,11 @@ import { BlendFunction, ToneMappingMode } from 'postprocessing';
  * surface tops out near 1 while an emissive one sits at 4. That gap is where a
  * threshold can land.
  */
-function EffectChain({ profile, aboveLit, toneMapping }) {
+function EffectChain({ profile, aboveLit, toneMapping, smaa }) {
   return (
-    <EffectComposer multisampling={profile.multisampling}>
+    // MSAA is dropped while SMAA is on, so that the two antialiasing paths are
+    // compared one at a time and the error counter has a single cause.
+    <EffectComposer multisampling={smaa ? 0 : profile.multisampling}>
       {profile.bloom && (
         <Bloom
           intensity={2.4}
@@ -61,67 +57,16 @@ function EffectChain({ profile, aboveLit, toneMapping }) {
           opacity={profile.grain}
         />
       )}
-      {profile.smaa && <SMAA />}
+
+      {/* The trap. SMAA is the ordinary, recommended way to antialias a chain
+          and nothing about reaching for it looks risky, but it declares
+          EffectAttribute.DEPTH and every effect carrying that attribute takes
+          the composer down the same path: a "stable" depth target cloned from
+          the input buffer's, sharing its Source, blitted onto itself once a
+          frame. Turn it on and watch the GL error counter, not the edges. */}
+      {smaa && <SMAA />}
     </EffectComposer>
   );
 }
 
-const MemoisedChain = memo(EffectChain);
-
-/** Re-render on a timer, to stand in for a parent that updates constantly. */
-function useChurn(active, hz = 30) {
-  const [, bump] = useReducer((n) => n + 1, 0);
-  useEffect(() => {
-    if (!active) return undefined;
-    const id = setInterval(bump, 1000 / hz);
-    return () => clearInterval(id);
-  }, [active, hz]);
-}
-
-/**
- * Hosts the chain.
- *
- * An EffectComposer rebuilds its pass list whenever `children` changes
- * identity, which in React means on every render of whatever holds the JSX. So
- * a composer written inline inside a component that re-renders often, and
- * "often" here means any component subscribed to a context that updates on
- * every incoming message, tears its passes down and builds them again several
- * times a second.
- *
- * The received wisdom is that this leaks GPU memory, because `removePass` was
- * historically not paired with a dispose. On the version pinned here that is
- * no longer true: the teardown effect calls `removePass` and
- * `disposeGeneratedPass` together. Measured over this demo, with the chain
- * rebuilt thirty times a second, the shader program and texture counts stay
- * flat.
- *
- * Which is the reason the counters are on screen. The advice survives the
- * correction, but for its real reason rather than a borrowed one: you are
- * still rebuilding passes and recompiling shaders at 30 Hz for nothing, and
- * that is CPU time and frame pacing, not a fuse on the context. Turn the
- * switches on and watch the numbers yourself rather than taking either claim
- * on trust.
- */
-export default function EffectsHost({
-  profile,
-  aboveLit,
-  toneMapping,
-  churn,
-  memoise,
-}) {
-  useChurn(churn);
-
-  return memoise ? (
-    <MemoisedChain
-      profile={profile}
-      aboveLit={aboveLit}
-      toneMapping={toneMapping}
-    />
-  ) : (
-    <EffectChain
-      profile={profile}
-      aboveLit={aboveLit}
-      toneMapping={toneMapping}
-    />
-  );
-}
+export default memo(EffectChain);

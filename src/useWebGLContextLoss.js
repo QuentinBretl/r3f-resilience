@@ -11,37 +11,51 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * WebGL context too many on the page (browsers cap it around sixteen and drop
  * the oldest without asking).
  *
- * Two details carry this hook, and both are easy to get wrong.
+ * You do NOT need to call `event.preventDefault()` yourself here, which is the
+ * opposite of the advice you will find everywhere. three.js attaches its own
+ * `webglcontextlost` listener when the renderer is constructed and calls
+ * `preventDefault()` inside it (`WebGLRenderer`, `onContextLost`). The advice
+ * is sound for a hand-rolled canvas and redundant for every three.js app.
  *
- * 1. `event.preventDefault()` on `webglcontextlost` is mandatory. Without it
- *    the browser never fires `webglcontextrestored`, and the loss is final.
- *    The default action of that event is, counter-intuitively, "give up".
+ * What the renderer does not do is tell your application. It logs a line to
+ * the console, sets an internal flag and stops painting. React hears nothing,
+ * so a scene that has quietly died looks exactly like a scene that is dark.
+ * That is what this hook is for.
  *
- * 2. The listeners have to be detached on unmount. react-three-fiber calls
- *    `gl.forceContextLoss()` itself when a Canvas unmounts, to hand the
- *    context back to the GPU. That fires a perfectly normal
- *    `webglcontextlost`. Leave the listener attached and every ordinary route
- *    change is reported to your users as a crash.
+ * Two details carry it, and both are easy to get wrong.
+ *
+ * 1. The listeners have to be detached, both on unmount and before attaching
+ *    to a new canvas. react-three-fiber calls `gl.forceContextLoss()` itself
+ *    when a Canvas unmounts, to hand the context back to the GPU. That fires a
+ *    perfectly normal `webglcontextlost`. Leave the listener attached and
+ *    every ordinary route change is reported to your users as a crash.
+ *
+ * 2. `lost` has to be resettable, because the way out of a loss you cannot
+ *    undo is to throw the canvas away and mount a new one, and the hook must
+ *    not carry the old canvas's verdict onto the new context.
  *
  * @param {object} [options]
  * @param {(event: Event) => void} [options.onLost]
  * @param {(event: Event) => void} [options.onRestored]
- * @returns {{ onCreated: (state: { gl: import('three').WebGLRenderer }) => void, lost: boolean }}
+ * @returns {{ onCreated: (state: { gl: import('three').WebGLRenderer }) => void, lost: boolean, reset: () => void }}
  *
  * @example
  * const { onCreated, lost } = useWebGLContextLoss();
- * return lost
- *   ? <SceneUnavailable />
- *   : <Canvas onCreated={onCreated}>{children}</Canvas>;
+ * return (
+ *   <div style={{ position: 'relative' }}>
+ *     <Canvas frameloop={lost ? 'never' : 'always'} onCreated={onCreated} />
+ *     {lost && <SceneUnavailable />}
+ *   </div>
+ * );
  */
 export function useWebGLContextLoss({ onLost, onRestored } = {}) {
   const [lost, setLost] = useState(false);
 
-  // The callbacks live in a ref so that passing a fresh arrow function on
-  // every render does not change `onCreated`. Its identity matters: r3f keeps
-  // the callback it was handed on its last configuration pass.
-  const callbacks = useRef({ onLost, onRestored });
-  callbacks.current = { onLost, onRestored };
+  // The callbacks live in a ref so that passing fresh arrow functions on every
+  // render does not change `onCreated`. Its identity matters: r3f keeps the
+  // callback it was handed on its last configuration pass.
+  const options = useRef({ onLost, onRestored });
+  options.current = { onLost, onRestored };
 
   const detach = useRef(null);
 
@@ -54,17 +68,21 @@ export function useWebGLContextLoss({ onLost, onRestored } = {}) {
   );
 
   const onCreated = useCallback((state) => {
+    // A Canvas can be remounted, and then this runs again. Drop the previous
+    // canvas's listeners first: r3f loses that context on the way out, and an
+    // orphaned listener would report the teardown as a fresh crash.
+    detach.current?.();
+
     const canvas = state.gl.domElement;
 
     const handleLost = (event) => {
-      event.preventDefault();
       setLost(true);
-      callbacks.current.onLost?.(event);
+      options.current.onLost?.(event);
     };
 
     const handleRestored = (event) => {
       setLost(false);
-      callbacks.current.onRestored?.(event);
+      options.current.onRestored?.(event);
     };
 
     canvas.addEventListener('webglcontextlost', handleLost);
@@ -76,5 +94,7 @@ export function useWebGLContextLoss({ onLost, onRestored } = {}) {
     };
   }, []);
 
-  return { onCreated, lost };
+  const reset = useCallback(() => setLost(false), []);
+
+  return { onCreated, lost, reset };
 }

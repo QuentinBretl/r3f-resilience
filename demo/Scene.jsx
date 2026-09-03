@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useStore, useThree } from '@react-three/fiber';
 import { Color } from 'three';
 import { countPrograms } from 'r3f-resilience';
+import { readGLProbe } from './glProbe.js';
 
 const LAMP_COLOURS = ['#ffb02e', '#4dd4ff', '#ff5470'];
 
@@ -101,7 +102,6 @@ function Readout({ onSample }) {
     }
   }, [store]);
 
-  const last = useRef(0);
   const frames = useRef(0);
   const since = useRef(0);
 
@@ -110,17 +110,16 @@ function Readout({ onSample }) {
     since.current += delta;
     if (since.current < 0.25) return;
 
-    const now = performance.now();
     onSample({
       programs: countPrograms(gl),
       geometries: gl.info.memory.geometries,
       textures: gl.info.memory.textures,
       calls: gl.info.render.calls,
+      glErrors: readGLProbe().errors,
       fps: Math.round(frames.current / since.current),
       pixelRatio: Number(gl.getPixelRatio().toFixed(2)),
     });
 
-    last.current = now;
     frames.current = 0;
     since.current = 0;
   });

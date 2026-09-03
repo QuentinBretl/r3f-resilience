@@ -1,10 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
-import { armGLDebug } from './debugGL.js';
+import { armGLProbe } from './glProbe.js';
 import './styles.css';
 
-armGLDebug();
+// Patched before anything creates a context, so no blit escapes the count.
+armGLProbe();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

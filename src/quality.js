@@ -61,26 +61,19 @@ export const QUALITY_PROFILES = {
     // into it. [1, 2] means "supersample up to 2x on a 1x screen, never
     // render more than 2x on a retina one".
     dpr: [1, 2],
-    // MSAA samples on the post-processing frame buffer. This is the safe way
-    // to antialias a chain, and the reason is on the line below.
+    // MSAA samples on the post-processing frame buffer, and the only sound way
+    // to antialias a chain on these versions.
+    //
+    // The obvious alternative, SMAA, is unusable: SMAAEffect declares
+    // `EffectAttribute.CONVOLUTION | EffectAttribute.DEPTH`, and the depth
+    // attribute makes the composer build a "stable" depth target by cloning
+    // the input buffer's depth texture. A cloned three.js texture shares its
+    // Source, so the two are one image on the card, and the composer then
+    // blits that image onto itself once per frame until the tab stops
+    // responding. The demo has a switch that turns the error counter on.
     multisampling: 8,
     shadows: true,
     bloom: true,
-    // SMAA is OFF, and not for a quality reason.
-    //
-    // SMAAEffect declares `EffectAttribute.CONVOLUTION | EffectAttribute.DEPTH`.
-    // The depth attribute is what matters: it makes the composer build a
-    // "stable" depth target by cloning the input buffer's depth texture, and a
-    // cloned three.js texture shares its Source, so the two are one image on
-    // the card. The composer then blits that image onto itself once per frame
-    // and the console fills with GL_INVALID_OPERATION until the tab stops
-    // responding. The README has the full trace.
-    //
-    // The trap is that SMAA is the ordinary, recommended way to antialias a
-    // post-processing chain, so nothing about reaching for it looks risky.
-    // Every effect carrying DEPTH reaches the same place: depth of field,
-    // god rays, SSAO, bokeh, shock wave, selective bloom, and SMAA.
-    smaa: false,
     vignette: 0.45,
     grain: 0.05,
   },
@@ -92,7 +85,6 @@ export const QUALITY_PROFILES = {
     multisampling: 0,
     shadows: false,
     bloom: false,
-    smaa: false,
     vignette: 0.35,
     grain: 0,
   },
